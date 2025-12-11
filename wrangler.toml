@@ -1,0 +1,101 @@
+# Digital Twin MVP - Cloudflare Configuration
+name = "digital-twin-mvp"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# Account configuration (use your Cloudflare account)
+account_id = "your-account-id-here"
+
+# Workers configuration
+workers_dev = true
+route = ""
+
+# Build configuration
+[build]
+command = "npm run build"
+
+[build.upload]
+format = "service-worker"
+
+# Durable Objects - The 9 MVP Agents
+[[durable_objects.bindings]]
+name = "STAFF_AGENT"
+class_name = "StaffAgent"
+script_name = "digital-twin-mvp"
+
+# Migrations for Durable Objects
+[[migrations]]
+tag = "v1"
+new_classes = ["StaffAgent"]
+
+# Environment variables
+[vars]
+ENVIRONMENT = "production"
+MAX_AGENTS = "500"
+REFLECTION_ENABLED = "true"
+
+# Secrets (add via: wrangler secret put GEMINI_API_KEY)
+# GEMINI_API_KEY = "your-gemini-api-key"
+# Get free key from: https://aistudio.google.com/app/apikey
+
+# D1 Database (optional - for storing conversation history)
+[[d1_databases]]
+binding = "DB"
+database_name = "digital-twin-db"
+database_id = "your-d1-database-id"
+
+# R2 Storage (optional - for artifact storage)
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "digital-twin-artifacts"
+
+# Vectorize (optional - for semantic search across outputs)
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "agent-outputs"
+
+# KV Namespace (optional - for caching)
+[[kv_namespaces]]
+binding = "CACHE"
+id = "your-kv-namespace-id"
+
+# Analytics Engine (optional - for monitoring)
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+
+# Rate Limiting (optional)
+[limits]
+cpu_ms = 50000  # 50 seconds per request (generous for long agent workflows)
+
+# Development configuration
+[env.development]
+name = "digital-twin-dev"
+vars = { ENVIRONMENT = "development" }
+
+# Staging configuration
+[env.staging]
+name = "digital-twin-staging"
+vars = { ENVIRONMENT = "staging" }
+
+# Production configuration  
+[env.production]
+name = "digital-twin-prod"
+vars = { ENVIRONMENT = "production", MAX_AGENTS = "500" }
+
+# Observability
+[observability]
+enabled = true
+
+# Custom domains (optional)
+# [[routes]]
+# pattern = "api.digital-twin.com/*"
+# custom_domain = true
+
+# Compatibility flags
+[compatibility_flags]
+nodejs_compat = true
+
+# Asset configuration (for frontend)
+[assets]
+directory = "./public"
+binding = "ASSETS"
