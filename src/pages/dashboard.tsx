@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { Activity, Users, Zap, CheckCircle, AlertCircle, Clock, Code, FileText, Database, Settings, TestTube, BookOpen, Briefcase, Layers } from 'lucide-react';
+import { Activity, Users, Zap, CheckCircle, AlertCircle, Code, Database, Settings, TestTube, BookOpen, Briefcase, Layers } from 'lucide-react';
+import { apiClient } from '../services/api';
+import type { WorkflowRun, AgentStep } from '../services/api';
 
 // Role definitions matching your 190-role taxonomy
 const roles = [
@@ -146,8 +148,22 @@ Output a clear task sequence with role assignments.`
   }
 ];
 
-const WorkflowVisualizer = ({ workflow }) => {
-  const getTierColor = (tier) => {
+interface WorkflowStep {
+  roleId: string;
+  task: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  output?: string;
+  error?: string;
+}
+
+interface LogEntry {
+  time: string;
+  message: string;
+  type: string;
+}
+
+const WorkflowVisualizer = ({ workflow }: { workflow: WorkflowStep[] }) => {
+  const getTierColor = (tier: string) => {
     switch(tier) {
       case 'strategy': return 'bg-purple-500';
       case 'development': return 'bg-blue-500';
@@ -163,23 +179,31 @@ const WorkflowVisualizer = ({ workflow }) => {
         const role = roles.find(r => r.id === step.roleId);
         const Icon = role?.icon || Activity;
         return (
-          <div key={idx} className="flex items-start gap-4">
+          <div key={idx} className="flex items-start gap-4" role="article" aria-label={`${role?.name} step`}>
             <div className="flex flex-col items-center">
-              <div className={`w-12 h-12 rounded-full ${getTierColor(role?.tier)} flex items-center justify-center text-white`}>
-                <Icon size={24} />
+              <div 
+                className={`w-12 h-12 rounded-full ${getTierColor(role?.tier || 'default')} flex items-center justify-center text-white`}
+                role="img"
+                aria-label={`${role?.name} icon`}
+              >
+                <Icon size={24} aria-hidden="true" />
               </div>
               {idx < workflow.length - 1 && (
-                <div className="w-0.5 h-16 bg-gray-300 my-2"></div>
+                <div className="w-0.5 h-16 bg-gray-300 my-2" aria-hidden="true"></div>
               )}
             </div>
             <div className="flex-1 bg-white rounded-lg p-4 shadow-sm border border-gray-200">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="font-semibold text-gray-900">{role?.name}</h4>
-                <span className={`px-2 py-1 text-xs rounded-full ${
-                  step.status === 'completed' ? 'bg-green-100 text-green-800' :
-                  step.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
-                  'bg-gray-100 text-gray-600'
-                }`}>
+                <span 
+                  className={`px-2 py-1 text-xs rounded-full ${
+                    step.status === 'completed' ? 'bg-green-100 text-green-800' :
+                    step.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
+                    'bg-gray-100 text-gray-600'
+                  }`}
+                  role="status"
+                  aria-label={`Status: ${step.status}`}
+                >
                   {step.status}
                 </span>
               </div>
@@ -190,9 +214,18 @@ const WorkflowVisualizer = ({ workflow }) => {
                     <CheckCircle size={14} className="text-green-500" />
                     <span className="text-gray-700 font-semibold">Output Generated</span>
                   </div>
-                  <div className="text-gray-600 whitespace-pre-wrap">
-                    {step.output.substring(0, 150)}...
+                  <div className="text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                    {step.output.substring(0, 500)}{step.output.length > 500 ? '...' : ''}
                   </div>
+                </div>
+              )}
+              {step.error && (
+                <div className="mt-2 p-3 bg-red-50 rounded text-xs">
+                  <div className="flex items-center gap-2 mb-1">
+                    <AlertCircle size={14} className="text-red-500" />
+                    <span className="text-red-700 font-semibold">Error</span>
+                  </div>
+                  <div className="text-red-600">{step.error}</div>
                 </div>
               )}
             </div>
@@ -205,195 +238,93 @@ const WorkflowVisualizer = ({ workflow }) => {
 
 export default function DigitalTwinMVP() {
   const [featureRequest, setFeatureRequest] = useState('');
-  const [workflow, setWorkflow] = useState([]);
+  const [workflow, setWorkflow] = useState<WorkflowStep[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [activeStep, setActiveStep] = useState(0);
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [retryCount, setRetryCount] = useState(0);
+  const [lastError, setLastError] = useState<string | null>(null);
 
-  const addLog = (message, type = 'info') => {
+  const addLog = (message: string, type = 'info') => {
     setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), message, type }]);
   };
 
-  const simulateAgentWork = async (roleId, task, context) => {
-    const role = roles.find(r => r.id === roleId);
-    addLog(`🤖 ${role.name} starting: ${task}`, 'agent');
-    
-    // Simulate API call to Gemini
-    await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 2000));
-    
-    // Simulate generated output based on role
-    const outputs = {
-      pm: `# Feature Specification
-
-**User Story:** As a user, I want to ${task.toLowerCase()}, so that I can have a better experience.
-
-**Acceptance Criteria:**
-- Feature must load in < 2 seconds
-- Must work on mobile and desktop
-- Must handle errors gracefully
-
-**Priority:** P1
-**Complexity:** Medium`,
-      
-      architect: `# Technical Architecture
-
-**Components:**
-1. Frontend: React SPA
-2. Backend: Cloudflare Workers
-3. Database: D1 (SQLite)
-4. Storage: R2 for assets
-
-**API Endpoints:**
-- POST /api/feature - Create
-- GET /api/feature/:id - Read
-- PUT /api/feature/:id - Update
-
-**Data Flow:** Client → Worker → D1 → Response`,
-      
-      frontend: `// React Component
-function FeatureComponent() {
-  const [data, setData] = useState(null);
-  
-  useEffect(() => {
-    fetch('/api/feature')
-      .then(res => res.json())
-      .then(setData);
-  }, []);
-  
-  return <div>{data?.content}</div>;
-}`,
-      
-      backend: `// Cloudflare Worker API
-export default {
-  async fetch(request, env) {
-    if (request.method === 'POST') {
-      const data = await request.json();
-      await env.DB.prepare(
-        'INSERT INTO features (content) VALUES (?)'
-      ).bind(data.content).run();
-      return new Response('Created', { status: 201 });
+  const runWorkflow = async (isRetry = false) => {
+    if (!featureRequest.trim()) {
+      setLastError('Please enter a feature request');
+      return;
     }
-  }
-}`,
-      
-      database: `-- Feature Table Schema
-CREATE TABLE features (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  content TEXT NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_created ON features(created_at);`,
-      
-      devops: `# wrangler.toml
-name = "feature-worker"
-main = "src/index.js"
-compatibility_date = "2024-01-01"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "features"
-database_id = "xxx"`,
-      
-      qa: `# Test Plan
-
-**Test Case 1: Happy Path**
-- Input: Valid feature data
-- Expected: 201 Created, data saved
-- Actual: ✅ Pass
-
-**Test Case 2: Invalid Input**
-- Input: Empty data
-- Expected: 400 Bad Request
-- Actual: ✅ Pass`,
-      
-      tech_writer: `# Feature Documentation
-
-## Overview
-This feature allows users to ${task.toLowerCase()}.
-
-## Usage
-\`\`\`javascript
-const response = await fetch('/api/feature', {
-  method: 'POST',
-  body: JSON.stringify({ content: 'test' })
-});
-\`\`\`
-
-## Response
-- 201: Successfully created
-- 400: Invalid input`,
-      
-      project_mgr: `# Project Breakdown
-
-**Phase 1:** Requirements (PM) → Architecture (Architect)
-**Phase 2:** Development (Frontend + Backend + Database)
-**Phase 3:** Testing (QA) → Documentation (Tech Writer)
-
-**Dependencies:** Backend depends on Database schema
-**Timeline:** ~2 days for MVP`
-    };
-    
-    const output = outputs[roleId] || `Task completed: ${task}`;
-    addLog(`✅ ${role.name} completed task`, 'success');
-    
-    return output;
-  };
-
-  const runWorkflow = async () => {
-    if (!featureRequest.trim()) return;
     
     setIsProcessing(true);
     setWorkflow([]);
     setLogs([]);
-    setActiveStep(0);
+    setLastError(null);
     
-    addLog('🚀 Starting Digital Twin workflow...', 'system');
-    
-    // Define the waterfall workflow
-    const workflowSteps = [
-      { roleId: 'project_mgr', task: 'Break down feature request and create task sequence' },
-      { roleId: 'pm', task: 'Create detailed feature specification' },
-      { roleId: 'architect', task: 'Design technical architecture and API contract' },
-      { roleId: 'database', task: 'Design database schema' },
-      { roleId: 'backend', task: 'Implement API endpoints' },
-      { roleId: 'frontend', task: 'Build user interface components' },
-      { roleId: 'devops', task: 'Configure deployment pipeline' },
-      { roleId: 'qa', task: 'Create and execute test plan' },
-      { roleId: 'tech_writer', task: 'Write user and API documentation' }
-    ];
-    
-    let context = { featureRequest };
-    
-    for (let i = 0; i < workflowSteps.length; i++) {
-      const step = workflowSteps[i];
-      
-      // Add step to workflow
-      setWorkflow(prev => [...prev, {
-        ...step,
-        status: 'in_progress',
-        output: null
-      }]);
-      setActiveStep(i);
-      
-      // Simulate agent work
-      const output = await simulateAgentWork(step.roleId, step.task, context);
-      
-      // Update context with output
-      context[step.roleId] = output;
-      
-      // Mark step complete
-      setWorkflow(prev => prev.map((s, idx) => 
-        idx === i ? { ...s, status: 'completed', output } : s
-      ));
-      
-      // Brief pause between agents
-      await new Promise(resolve => setTimeout(resolve, 500));
+    if (!isRetry) {
+      setRetryCount(0);
     }
     
-    addLog('🎉 Feature development complete!', 'success');
-    setIsProcessing(false);
+    addLog(isRetry ? '🔄 Retrying workflow...' : '🚀 Starting Digital Twin workflow via Worker API...', 'system');
+    
+    try {
+      const result: WorkflowRun = await apiClient.runWorkflow(featureRequest);
+      
+      addLog(`✅ Workflow ${result.id} completed`, 'success');
+      
+      // Transform steps for UI
+      const uiSteps: WorkflowStep[] = result.steps.map((step: AgentStep) => {
+        const role = roles.find(r => r.id === step.roleId);
+        return {
+          roleId: step.roleId,
+          task: role?.description || step.roleId,
+          status: step.status as WorkflowStep['status'],
+          output: step.output,
+          error: step.error
+        };
+      });
+      
+      // Simulate progressive reveal for better UX
+      for (let i = 0; i < uiSteps.length; i++) {
+        const step = uiSteps[i];
+        const role = roles.find(r => r.id === step.roleId);
+        
+        setWorkflow(prev => [...prev, { ...step, status: 'in_progress' }]);
+        addLog(`🤖 ${role?.name} processing...`, 'agent');
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        setWorkflow(prev => prev.map((s, idx) => 
+          idx === i ? { ...s, status: step.status, output: step.output, error: step.error } : s
+        ));
+        
+        if (step.status === 'completed') {
+          addLog(`✅ ${role?.name} completed`, 'success');
+        } else if (step.status === 'failed') {
+          addLog(`❌ ${role?.name} failed: ${step.error}`, 'error');
+        }
+      }
+      
+      addLog('🎉 Feature development complete!', 'success');
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      setLastError(errorMsg);
+      setRetryCount(prev => prev + 1);
+      
+      addLog(`❌ Workflow failed: ${errorMsg}`, 'error');
+      
+      // Show error in UI
+      setWorkflow(prev => [...prev, {
+        roleId: 'error',
+        task: 'Error',
+        status: 'failed',
+        error: errorMsg
+      }]);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleRetry = () => {
+    runWorkflow(true);
   };
 
   const exampleRequests = [
@@ -438,7 +369,7 @@ const response = await fetch('/api/feature', {
               <h3 className="text-lg font-semibold mb-4 text-gray-900">Feature Request</h3>
               <textarea
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
-                rows="4"
+                rows={4}
                 placeholder="Describe the feature you want to build..."
                 value={featureRequest}
                 onChange={(e) => setFeatureRequest(e.target.value)}
@@ -459,19 +390,37 @@ const response = await fetch('/api/feature', {
                 ))}
               </div>
               
+              {lastError && (
+                <div className="mt-3 flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700" role="alert" aria-live="polite">
+                  <AlertCircle size={20} aria-hidden="true" />
+                  <span className="flex-1">{lastError}</span>
+                  {retryCount > 0 && retryCount < 3 && (
+                    <button
+                      onClick={handleRetry}
+                      className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors text-sm font-medium"
+                      aria-label="Retry workflow"
+                    >
+                      Retry ({retryCount}/3)
+                    </button>
+                  )}
+                </div>
+              )}
+              
               <button
-                onClick={runWorkflow}
+                onClick={() => runWorkflow(false)}
                 disabled={isProcessing || !featureRequest.trim()}
                 className="w-full mt-4 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white font-semibold py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
+                aria-label="Start feature development"
+                aria-busy={isProcessing}
               >
                 {isProcessing ? (
                   <>
-                    <Clock size={18} className="animate-spin" />
-                    Processing...
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" aria-hidden="true"></div>
+                    Processing... ({workflow.filter(s => s.status === 'completed').length}/{roles.length} steps)
                   </>
                 ) : (
                   <>
-                    <Zap size={18} />
+                    <Zap size={18} aria-hidden="true" />
                     Start Development
                   </>
                 )}
@@ -490,6 +439,7 @@ const response = await fetch('/api/feature', {
                       <span className="text-gray-400 font-mono">{log.time}</span>
                       <span className={`flex-1 ${
                         log.type === 'success' ? 'text-green-600' :
+                        log.type === 'error' ? 'text-red-600' :
                         log.type === 'agent' ? 'text-blue-600' :
                         'text-gray-600'
                       }`}>
