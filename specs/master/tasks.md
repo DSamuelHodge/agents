@@ -122,3 +122,195 @@
 - MVP first: Deliver US1 end-to-end before expanding.
 - Incremental: After US1 validation, add US2 role chat, then US3 resilience.
 - Always keep secrets server-side; use `wrangler secret put GEMINI_API_KEY` and avoid client leakage.
+
+---
+
+## Phase 6: Next Evolution - Real Project Artifacts (Priority: P1)
+
+**Goal**: Generate actual, runnable project files in GitHub and enable automated deployment.
+
+**Context**: Current MVP returns text descriptions. Next evolution persists artifacts to git + enables human review + auto-execution.
+
+### E1: File Generation & GitHub Integration
+
+- [x] E1-T001 Create `worker/src/utils/github.ts` module wrapping GitHub REST API (`@octokit/rest`) to:
+  - Create repository (or use existing `generated-projects`)
+  - Create feature branch per workflow ID
+  - Commit generated files
+  - Open pull request with agent outputs as description
+  - Log PR URL in workflow response
+
+- [x] E1-T002 Add `worker/src/artifacts/generator.ts` module with helpers:
+  - `extractCode(agentOutput: string)` - Parse markdown code blocks from agent text
+  - `writeFile(path: string, content: string)` - Format and validate code
+  - `generateProjectStructure(workflow: WorkflowRun)` - Create directory layout
+  - `createREADME(workflow: WorkflowRun)` - Summarize workflow outputs
+
+- [x] E1-T003 Extend `WorkflowOrchestrator` to:
+  - After workflow completes, call `ArtifactGenerator.generate(workflow)`
+  - Write files to `tmp/{workflowId}/`
+  - Push to GitHub via `GitHubClient`
+  - Update workflow.artifactUrl = PR URL
+  - Store artifacts in Durable Object for audit trail
+
+- [x] E1-T004 Add GitHub token management:
+  - Read `GITHUB_TOKEN` from Wrangler secret (set from `.env`)
+  - Validate token has repo/workflows permissions
+  - Handle rate limiting (5k requests/hour)
+  - Refresh token if expired
+
+- [x] E1-T005 Update API response schema:
+  - Add `artifactUrl: string` to `WorkflowRun` type
+  - Add `prNumber: number` and `branch: string` to response
+  - Return GitHub URLs in dashboard for user review
+
+- [x] E1-T006 Add tests in `tests/worker/artifacts.test.ts`:
+  - Mock GitHub API calls (don't actually push to real repo)
+  - Test code extraction from agent outputs
+  - Test project structure generation
+  - Test error handling (invalid token, rate limit)
+
+### E2: Code Quality & Validation
+
+- [x] E2-T001 Create `worker/src/validation/linter.ts` module to:
+  - Run ESLint on generated TypeScript/JavaScript
+  - Run Prettier for formatting
+  - Run sqlformat on SQL
+  - Collect linting errors and warnings
+  - Return formatted code + error list
+
+- [x] E2-T002 Create `worker/src/validation/tester.ts` module to:
+  - Parse generated test files
+  - Validate syntax (compile TypeScript, lint Python)
+  - Report test coverage estimate
+  - Flag missing test cases for critical paths
+
+- [x] E2-T003 Extend workflow to include validation step:
+  - After all agents complete, run linter on backend/frontend/database outputs
+  - Fix common issues (missing imports, formatting)
+  - Report issues in PR as review comments
+  - Block merge if critical issues found
+
+- [x] E2-T004 Add `worker/src/utils/feedback.ts` module to:
+  - Detect linting/compilation errors in generated code
+  - Send error details back to relevant agent for fix
+  - Re-generate code iteratively until valid
+  - Cap retries at 3 to avoid infinite loops
+
+- [x] E2-T005 Update dashboard to show:
+  - Code quality score (green/yellow/red)
+  - Linting errors with fix suggestions
+  - Test coverage estimate
+  - Link to GitHub PR for review
+
+### E3: Deployment & CI/CD
+
+- [x] E3-T001 Create GitHub Actions workflow (`.github/workflows/agents.yml`):
+  - Trigger on PR from `agents/workflow-*` branches
+  - Run generated tests
+  - Build Docker image
+  - Push to staging environment
+  - Post results as PR comment
+
+- [x] E3-T002 Extend `GitHubClient` to:
+  - Enable branch protection rules on `main`
+  - Require status checks (tests, linter) to pass
+  - Require human approval to merge
+  - Auto-merge when approved (optional)
+
+- [x] E3-T003 Create deployment trigger in Worker:
+  - After PR approval, trigger GitHub Actions to deploy
+  - Monitor deployment status
+  - Rollback on failure
+  - Notify workflow creator via email/webhook
+
+- [x] E3-T004 Add audit logging:
+  - Store all agent decisions in Durable Object
+  - Track who approved what and when
+  - Enable rollback to prior versions
+  - Export audit trail as JSON
+
+### E4: UI Enhancements
+
+- [ ] E4-T001 Update dashboard to show GitHub integration:
+  - Display PR link after workflow completes
+  - Show PR status (open, approved, merged)
+  - Allow inline review comments
+  - Show code diffs vs main branch
+
+- [ ] E4-T002 Add workflow history view:
+  - List all past workflows
+  - Show which ones were merged
+  - Compare outputs between runs
+  - Export artifacts
+
+- [ ] E4-T003 Add approval UI:
+  - Show code quality score
+  - Highlight issues needing review
+  - One-click approve/merge
+  - Add custom notes before approving
+
+- [ ] E4-T004 Add settings panel:
+  - Configure target GitHub org/repo
+  - Toggle auto-merge on/off
+  - Set approval requirements (who must review)
+  - Configure deployment environment
+
+### E5: Scalability & Enterprise Features
+
+- [ ] E5-T001 Implement request queuing:
+  - Store pending workflows in Durable Object queue
+  - Process max 1 workflow at a time (free tier Gemini limit)
+  - Show queue position and ETA in UI
+
+- [ ] E5-T002 Add usage analytics:
+  - Track workflows per user/org
+  - Monitor Gemini API spend
+  - Alert when approaching rate limits
+  - Implement cost tracking/billing hooks
+
+- [ ] E5-T003 Add webhook notifications:
+  - Notify on workflow start/completion
+  - Notify on PR merge
+  - Integrate with Slack/Discord
+  - Support custom webhooks
+
+- [ ] E5-T004 Multi-tenant support:
+  - Use authenticated GitHub user's repo
+  - Isolate workflows per user
+  - Store workflow metadata (creator, timestamp)
+  - Implement access controls
+
+---
+
+## Dependencies & Sequencing
+
+**Next Evolution Order:**
+1. **E1 (File Generation)**: Foundational for all downstream work
+2. **E2 (Code Quality)**: Enable after E1-T003 (files being generated)
+3. **E3 (CI/CD)**: Requires E1 (PR creation) and E2 (quality gates)
+4. **E4 (UI)**: Can start once E1-T005 (API responses updated)
+5. **E5 (Scalability)**: Last priority (nice-to-have for MVP+)
+
+**Estimated Effort:**
+- E1: 40 hours (file generation, GitHub integration, testing)
+- E2: 30 hours (validation pipeline, feedback loop, error handling)
+- E3: 25 hours (GitHub Actions, deployment orchestration)
+- E4: 20 hours (UI updates, review interface)
+- E5: 20 hours (queuing, analytics, webhooks)
+
+**Total Next Evolution: ~135 hours (~3-4 weeks for 1 engineer)**
+
+---
+
+## Success Metrics
+
+After Next Evolution, users will be able to:
+1. Submit feature request via UI
+2. Watch 9 agents generate specs + code
+3. Review generated PR on GitHub
+4. Merge to auto-deploy to staging
+5. Approve for production deployment
+6. See audit trail of all decisions
+
+**Outcome**: From feature request → staging-ready code in ~5-10 minutes (vs 1-2 weeks manual).
