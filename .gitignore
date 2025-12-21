@@ -35,4 +35,4 @@ coverage
 *.sln
 *.sw?
 
-.dev/
+.dev

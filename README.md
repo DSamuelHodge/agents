@@ -81,21 +81,14 @@ curl -X POST http://127.0.0.1:8787/workflow \
 │  - Per-agent status updates                             │
 │  - Activity logs                                        │
 └────────────────┬────────────────────────────────────────┘
-                 │ apiClient.runWorkflow()
-                 ↓
-┌─────────────────────────────────────────────────────────┐
 │  Cloudflare Worker API                                  │
-│  - POST /workflow (9-agent orchestration)               │
 │  - POST /agent/:role/chat (single agent)                │
 │  - GET /status (health check)                           │
 └────────────────┬────────────────────────────────────────┘
                  │ Sequential execution with context
                  ↓
 ┌─────────────────────────────────────────────────────────┐
-│  Workflow Orchestrator                                  │
-│  - Runs agents in sequence                              │
 │  - Chains outputs as context                            │
-│  - Handles retries (3x exponential backoff)             │
 └────────────────┬────────────────────────────────────────┘
                  │ generate(prompt, systemPrompt)
                  ↓

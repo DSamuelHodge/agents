@@ -1,7 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Activity, Users, Zap, CheckCircle, AlertCircle, Code, Database, Settings, TestTube, BookOpen, Briefcase, Layers } from 'lucide-react';
 import { apiClient } from '../services/api';
-import type { WorkflowRun, AgentStep } from '../services/api';
+import { agentClient } from '../services/agent';
+import type {
+  WorkflowRun,
+  AgentStep,
+  PullRequestStatus,
+  PullRequestDiff,
+  PullRequestReviewComment,
+  WorkflowHistoryItem,
+  WorkflowCompareResponse,
+  AppSettings
+} from '../services/api';
 
 // Role definitions matching your 190-role taxonomy
 const roles = [
@@ -243,6 +253,180 @@ export default function DigitalTwinMVP() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [retryCount, setRetryCount] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<WorkflowRun | null>(null);
+
+  const [prStatus, setPrStatus] = useState<PullRequestStatus | null>(null);
+  const [prDiff, setPrDiff] = useState<PullRequestDiff | null>(null);
+  const [prComments, setPrComments] = useState<PullRequestReviewComment[]>([]);
+  const [prUiError, setPrUiError] = useState<string | null>(null);
+  const [isLoadingPrData, setIsLoadingPrData] = useState(false);
+
+  const [commentPath, setCommentPath] = useState('');
+  const [commentLine, setCommentLine] = useState('');
+  const [commentBody, setCommentBody] = useState('');
+  const [isPostingComment, setIsPostingComment] = useState(false);
+
+  const [historyItems, setHistoryItems] = useState<WorkflowHistoryItem[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [compareA, setCompareA] = useState('');
+  const [compareB, setCompareB] = useState('');
+  const [compareResult, setCompareResult] = useState<WorkflowCompareResponse | null>(null);
+  const [isComparing, setIsComparing] = useState(false);
+
+  const [approvalNotes, setApprovalNotes] = useState('');
+  const [isApproving, setIsApproving] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
+
+  const [, setSettings] = useState<AppSettings | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsOwner, setSettingsOwner] = useState('');
+  const [settingsRepo, setSettingsRepo] = useState('');
+  const [settingsAutoMerge, setSettingsAutoMerge] = useState(false);
+  const [settingsRequiredApprovals, setSettingsRequiredApprovals] = useState('1');
+  const [settingsRequiredReviewers, setSettingsRequiredReviewers] = useState('');
+  const [settingsDeploymentEnv, setSettingsDeploymentEnv] = useState('');
+
+  // Live Worker status
+  const [workerHealthy, setWorkerHealthy] = useState<boolean | null>(null);
+  const [workerStatusError, setWorkerStatusError] = useState<string | null>(null);
+
+  const prNumber = useMemo(() => {
+    const n = lastResult?.prNumber;
+    return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null;
+  }, [lastResult?.prNumber]);
+
+  const statusPillClasses = (label: PullRequestStatus['label']) => {
+    switch (label) {
+      case 'merged':
+        return 'bg-green-100 text-green-800';
+      case 'approved':
+        return 'bg-blue-100 text-blue-800';
+      case 'open':
+        return 'bg-gray-100 text-gray-700';
+      case 'closed':
+        return 'bg-gray-200 text-gray-700';
+      default:
+        return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  const refreshPrData = async () => {
+    if (!prNumber) return;
+
+    setIsLoadingPrData(true);
+    setPrUiError(null);
+
+    try {
+      const [status, diff, commentsResp] = await Promise.all([
+        apiClient.getPullRequestStatus(prNumber),
+        apiClient.getPullRequestDiff(prNumber),
+        apiClient.listPullRequestReviewComments(prNumber)
+      ]);
+
+      setPrStatus(status);
+      setPrDiff(diff);
+      setPrComments(commentsResp.comments);
+
+      // set defaults for comment form
+      if (!commentPath && diff.files.length > 0) {
+        setCommentPath(diff.files[0]?.filename ?? '');
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Failed to load PR data';
+      setPrUiError(msg);
+    } finally {
+      setIsLoadingPrData(false);
+    }
+  };
+
+  const refreshHistory = async () => {
+    setIsLoadingHistory(true);
+    setHistoryError(null);
+    try {
+      const res = await apiClient.listWorkflowHistory(50, true);
+      setHistoryItems(res.items);
+
+      // Initialize compare selections if not set.
+      if (!compareA && res.items.length > 0) {
+        setCompareA(res.items[0]?.id ?? '');
+      }
+      if (!compareB && res.items.length > 1) {
+        setCompareB(res.items[1]?.id ?? res.items[0]?.id ?? '');
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Failed to load workflow history';
+      setHistoryError(msg);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  const refreshSettings = async () => {
+    setIsLoadingSettings(true);
+    setSettingsError(null);
+    try {
+      const s = await apiClient.getSettings();
+      setSettings(s);
+      setSettingsOwner(s.github.owner);
+      setSettingsRepo(s.github.repo);
+      setSettingsAutoMerge(Boolean(s.autoMerge));
+      setSettingsRequiredApprovals(String(s.requiredApprovals ?? 1));
+      setSettingsRequiredReviewers((s.requiredReviewers ?? []).join(', '));
+      setSettingsDeploymentEnv(s.deploymentEnvironment ?? '');
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Failed to load settings';
+      setSettingsError(msg);
+    } finally {
+      setIsLoadingSettings(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshHistory();
+    void refreshSettings();
+    // Live status heartbeat
+    const pollStatus = async () => {
+      try {
+        // Use legacy /status endpoint which works reliably
+        const res = await apiClient.getStatus();
+        setWorkerHealthy(res?.ok === true);
+        setWorkerStatusError(null);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Worker status unavailable';
+        setWorkerHealthy(false);
+        setWorkerStatusError(msg);
+      }
+    };
+    void pollStatus();
+    const statusTimer = window.setInterval(pollStatus, 10000);
+    return () => {
+      if (statusTimer) window.clearInterval(statusTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    setPrStatus(null);
+    setPrDiff(null);
+    setPrComments([]);
+    setPrUiError(null);
+    setCommentPath('');
+    setCommentLine('');
+    setCommentBody('');
+    setApprovalNotes('');
+
+    if (!prNumber) return;
+
+    void refreshPrData();
+    const interval = window.setInterval(() => {
+      void refreshPrData();
+    }, 10000);
+    return () => window.clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prNumber]);
 
   const addLog = (message: string, type = 'info') => {
     setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), message, type }]);
@@ -258,6 +442,7 @@ export default function DigitalTwinMVP() {
     setWorkflow([]);
     setLogs([]);
     setLastError(null);
+    setLastResult(null);
     
     if (!isRetry) {
       setRetryCount(0);
@@ -266,7 +451,10 @@ export default function DigitalTwinMVP() {
     addLog(isRetry ? '🔄 Retrying workflow...' : '🚀 Starting Digital Twin workflow via Worker API...', 'system');
     
     try {
-      const result: WorkflowRun = await apiClient.runWorkflow(featureRequest);
+      const result = await apiClient.runWorkflow(featureRequest);
+
+      setLastResult(result);
+      void refreshHistory();
       
       addLog(`✅ Workflow ${result.id} completed`, 'success');
       
@@ -323,15 +511,33 @@ export default function DigitalTwinMVP() {
     }
   };
 
+  const downloadJson = (filename: string, data: unknown) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const historyStatusPill = (item: WorkflowHistoryItem) => {
+    const merged = item.pr?.state === 'merged' || item.pr?.merged === true;
+    const openApproved = item.pr?.state === 'open' && (item.pr?.approvals ?? 0) > 0;
+
+    if (merged) return { text: 'merged', cls: 'bg-green-100 text-green-800' };
+    if (openApproved) return { text: 'approved', cls: 'bg-blue-100 text-blue-800' };
+    if (item.status === 'failed') return { text: 'failed', cls: 'bg-red-100 text-red-800' };
+    if (item.status === 'completed') return { text: 'completed', cls: 'bg-green-100 text-green-800' };
+    if (item.status === 'in_progress') return { text: 'in_progress', cls: 'bg-blue-100 text-blue-800' };
+    return { text: String(item.status), cls: 'bg-gray-100 text-gray-700' };
+  };
+
   const handleRetry = () => {
     runWorkflow(true);
   };
-
-  const exampleRequests = [
-    'Build a user authentication system',
-    'Create a blog post management feature',
-    'Add real-time chat functionality'
-  ];
 
   return (
     <div className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100">
@@ -347,14 +553,23 @@ export default function DigitalTwinMVP() {
               <p className="text-gray-600 mt-1">9-Agent Synthetic Development Team</p>
             </div>
             <div className="text-right">
-              <div className="flex items-center gap-2 text-sm">
-                <Users size={16} className="text-gray-400" />
-                <span className="text-gray-600">9 Active Agents</span>
+              <div className="flex items-center gap-4 text-sm">
+                <div className="flex items-center gap-2">
+                  <Users size={16} className="text-gray-400" />
+                  <span className="text-gray-600">9 Active Agents</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Zap size={16} className={workerHealthy ? 'text-green-500' : workerHealthy === false ? 'text-red-500' : 'text-gray-400'} />
+                  <span className={workerHealthy ? 'text-green-600' : workerHealthy === false ? 'text-red-600' : 'text-gray-500'}>
+                    {workerHealthy === null ? 'Checking Worker…' : workerHealthy ? 'Worker: Live' : 'Worker: Unreachable'}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 text-sm mt-1">
-                <Zap size={16} className="text-green-500" />
-                <span className="text-green-600">Cloudflare + Gemini Free Tier</span>
-              </div>
+              {workerStatusError && (
+                <div className="mt-2 text-xs p-2 bg-red-50 border border-red-200 rounded text-red-700" role="alert" aria-live="polite">
+                  {workerStatusError}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -368,7 +583,8 @@ export default function DigitalTwinMVP() {
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <h3 className="text-lg font-semibold mb-4 text-gray-900">Feature Request</h3>
               <textarea
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+                id="feature-request"
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm text-gray-900 placeholder:text-gray-500"
                 rows={4}
                 placeholder="Describe the feature you want to build..."
                 value={featureRequest}
@@ -376,19 +592,6 @@ export default function DigitalTwinMVP() {
                 disabled={isProcessing}
               />
               
-              <div className="mt-3 space-y-2">
-                <p className="text-xs text-gray-500">Quick examples:</p>
-                {exampleRequests.map((ex, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setFeatureRequest(ex)}
-                    disabled={isProcessing}
-                    className="w-full text-left text-xs p-2 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200 text-gray-700 disabled:opacity-50"
-                  >
-                    {ex}
-                  </button>
-                ))}
-              </div>
               
               {lastError && (
                 <div className="mt-3 flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700" role="alert" aria-live="polite">
@@ -426,6 +629,561 @@ export default function DigitalTwinMVP() {
                 )}
               </button>
             </div>
+
+            {/* Settings Panel (E4-T004) */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">Settings</h3>
+                <button
+                  onClick={() => void refreshSettings()}
+                  disabled={isLoadingSettings || isSavingSettings}
+                  className="text-xs px-2 py-1 rounded border border-gray-200 bg-gray-50 hover:bg-gray-100 disabled:opacity-50"
+                  aria-label="Reload settings"
+                >
+                  Reload
+                </button>
+              </div>
+
+              {settingsError && (
+                <div className="mb-3 text-xs p-2 bg-red-50 border border-red-200 rounded text-red-700" role="alert" aria-live="polite">
+                  {settingsError}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label className="block" htmlFor="settings-owner">
+                    <span className="text-xs text-gray-600">GitHub organization or user</span>
+                    <input
+                      id="settings-owner"
+                      className="mt-1 w-full p-2 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder:text-gray-500"
+                      value={settingsOwner}
+                      onChange={(e) => setSettingsOwner(e.target.value)}
+                      placeholder="org or user, e.g. microsoft"
+                      disabled={isLoadingSettings || isSavingSettings}
+                      aria-describedby="settings-owner-help"
+                    />
+                    <span id="settings-owner-help" className="sr-only">Enter GitHub organization or username</span>
+                  </label>
+
+                  <label className="block" htmlFor="settings-repo">
+                    <span className="text-xs text-gray-600">GitHub repository name</span>
+                    <input
+                      id="settings-repo"
+                      className="mt-1 w-full p-2 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder:text-gray-500"
+                      value={settingsRepo}
+                      onChange={(e) => setSettingsRepo(e.target.value)}
+                      placeholder="repo name, e.g. agents"
+                      disabled={isLoadingSettings || isSavingSettings}
+                      aria-describedby="settings-repo-help"
+                    />
+                    <span id="settings-repo-help" className="sr-only">Enter GitHub repository name</span>
+                  </label>
+                </div>
+
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={settingsAutoMerge}
+                    onChange={(e) => setSettingsAutoMerge(e.target.checked)}
+                    disabled={isLoadingSettings || isSavingSettings}
+                  />
+                  <span className="text-sm text-gray-700">Auto-merge when approved</span>
+                </label>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label className="block" htmlFor="settings-approvals">
+                    <span className="text-xs text-gray-600">Required approvals</span>
+                    <input
+                      id="settings-approvals"
+                      type="number"
+                      min={1}
+                      className="mt-1 w-full p-2 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder:text-gray-500"
+                      value={settingsRequiredApprovals}
+                      onChange={(e) => setSettingsRequiredApprovals(e.target.value)}
+                      disabled={isLoadingSettings || isSavingSettings}
+                    />
+                  </label>
+
+                  <label className="block" htmlFor="settings-deploy-env">
+                    <span className="text-xs text-gray-600">Deployment environment</span>
+                    <input
+                      id="settings-deploy-env"
+                      className="mt-1 w-full p-2 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder:text-gray-500"
+                      value={settingsDeploymentEnv}
+                      onChange={(e) => setSettingsDeploymentEnv(e.target.value)}
+                      placeholder="e.g. staging, production"
+                      disabled={isLoadingSettings || isSavingSettings}
+                    />
+                  </label>
+                </div>
+
+                <label className="block" htmlFor="settings-reviewers">
+                  <span className="text-xs text-gray-600">Required reviewers (comma-separated GitHub logins)</span>
+                  <input
+                    id="settings-reviewers"
+                    className="mt-1 w-full p-2 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder:text-gray-500"
+                    value={settingsRequiredReviewers}
+                    onChange={(e) => setSettingsRequiredReviewers(e.target.value)}
+                    placeholder="comma-separated logins, e.g. alice, bob"
+                    disabled={isLoadingSettings || isSavingSettings}
+                  />
+                </label>
+
+                <button
+                  onClick={async () => {
+                    setIsSavingSettings(true);
+                    setSettingsError(null);
+                    try {
+                      const reviewers = settingsRequiredReviewers
+                        .split(',')
+                        .map(s => s.trim())
+                        .filter(Boolean);
+                      const requiredApprovals = Number(settingsRequiredApprovals);
+
+                      const updated = await apiClient.updateSettings({
+                        github: { owner: settingsOwner.trim(), repo: settingsRepo.trim() },
+                        autoMerge: settingsAutoMerge,
+                        requiredApprovals: Number.isFinite(requiredApprovals) ? requiredApprovals : undefined,
+                        requiredReviewers: reviewers,
+                        deploymentEnvironment: settingsDeploymentEnv.trim() || undefined,
+                      });
+                      setSettings(updated);
+
+                      if (prNumber) {
+                        await refreshPrData();
+                      }
+                      void refreshHistory();
+                    } catch (error) {
+                      const msg = error instanceof Error ? error.message : 'Failed to save settings';
+                      setSettingsError(msg);
+                    } finally {
+                      setIsSavingSettings(false);
+                    }
+                  }}
+                  disabled={isLoadingSettings || isSavingSettings}
+                  className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white font-semibold py-2 rounded-lg transition-colors"
+                  aria-label="Save settings"
+                >
+                  {isSavingSettings ? 'Saving…' : 'Save Settings'}
+                </button>
+              </div>
+            </div>
+
+            {/* Code Quality & Artifacts */}
+            {(lastResult?.quality || lastResult?.artifactUrl) && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-semibold mb-4 text-gray-900">Code Quality</h3>
+
+                {lastResult?.artifactUrl && (
+                  <div className="mb-4">
+                    <div className="text-sm text-gray-700">Generated PR</div>
+                    <a
+                      className="text-sm text-purple-600 hover:text-purple-700 underline break-all"
+                      href={lastResult.artifactUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {lastResult.artifactUrl}
+                    </a>
+                    {typeof lastResult.prNumber === 'number' && (
+                      <div className="text-xs text-gray-500 mt-1">PR #{lastResult.prNumber}{lastResult.branch ? ` · ${lastResult.branch}` : ''}</div>
+                    )}
+
+                    {prNumber && (
+                      <div className="mt-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-sm text-gray-700">PR Status</div>
+                          <button
+                            onClick={() => void refreshPrData()}
+                            disabled={isLoadingPrData}
+                            className="text-xs px-2 py-1 rounded border border-gray-200 bg-gray-50 hover:bg-gray-100 disabled:opacity-50"
+                            aria-label="Refresh PR status"
+                          >
+                            Refresh
+                          </button>
+                        </div>
+
+                        {prUiError && (
+                          <div className="text-xs p-2 bg-red-50 border border-red-200 rounded text-red-700" role="alert" aria-live="polite">
+                            {prUiError}
+                          </div>
+                        )}
+
+                        {prStatus ? (
+                          <div className="flex items-center justify-between">
+                            <span
+                              className={`px-2 py-1 text-xs rounded-full ${statusPillClasses(prStatus.label)}`}
+                              role="status"
+                              aria-label={`PR status ${prStatus.label}`}
+                            >
+                              {prStatus.label}
+                            </span>
+                            <span className="text-xs text-gray-500">Approvals: {prStatus.approvals}</span>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-500">{isLoadingPrData ? 'Loading…' : 'No status loaded'}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {lastResult?.quality && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-gray-700">Score</div>
+                      <div className="text-sm font-semibold text-gray-900">{lastResult.quality.score}/100</div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="p-2 rounded border border-gray-200 bg-gray-50">
+                        <div className="text-xs text-gray-500">Errors</div>
+                        <div className="text-sm font-semibold text-red-600">{lastResult.quality.errors}</div>
+                      </div>
+                      <div className="p-2 rounded border border-gray-200 bg-gray-50">
+                        <div className="text-xs text-gray-500">Warnings</div>
+                        <div className="text-sm font-semibold text-yellow-700">{lastResult.quality.warnings}</div>
+                      </div>
+                      <div className="p-2 rounded border border-gray-200 bg-gray-50">
+                        <div className="text-xs text-gray-500">Coverage</div>
+                        <div className="text-sm font-semibold text-gray-900">{lastResult.quality.coverageEstimate}%</div>
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-gray-500">
+                      {lastResult.qualityGatePassed ? 'Quality gate passed' : 'Quality gate failed'}
+                      {typeof lastResult.quality.formattedFiles === 'number' ? ` · Formatted ${lastResult.quality.formattedFiles} files` : ''}
+                    </div>
+
+                    {lastResult.quality.issues.length > 0 && (
+                      <div className="pt-2">
+                        <div className="text-sm font-semibold text-gray-900 mb-2">Top Findings</div>
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {lastResult.quality.issues.slice(0, 8).map((issue, idx) => (
+                            <div key={idx} className="text-xs p-2 bg-gray-50 border border-gray-200 rounded">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className={issue.severity === 'error' ? 'text-red-600 font-semibold' : 'text-yellow-700 font-semibold'}>
+                                  {issue.severity}
+                                </span>
+                                <span className="text-gray-500">{issue.tool}</span>
+                              </div>
+                              <div className="text-gray-700 font-mono break-all mt-1">{issue.filePath}</div>
+                              <div className="text-gray-600 mt-1">{issue.message}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Approval UI (E4-T003) */}
+            {prNumber && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-semibold mb-4 text-gray-900">Approval</h3>
+
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="p-2 rounded border border-gray-200 bg-gray-50">
+                      <div className="text-xs text-gray-500">Quality</div>
+                      <div className="text-sm font-semibold text-gray-900">
+                        {typeof lastResult?.quality?.score === 'number' ? `${lastResult.quality.score}/100` : '—'}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded border border-gray-200 bg-gray-50">
+                      <div className="text-xs text-gray-500">Errors</div>
+                      <div className="text-sm font-semibold text-red-600">
+                        {typeof lastResult?.quality?.errors === 'number' ? lastResult.quality.errors : '—'}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded border border-gray-200 bg-gray-50">
+                      <div className="text-xs text-gray-500">PR</div>
+                      <div className="text-sm font-semibold text-gray-900">
+                        {prStatus ? `${prStatus.approvals}/${prStatus.requiredApprovals}` : '—'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {lastResult?.quality?.issues?.length ? (
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900 mb-2">Issues needing review</div>
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {lastResult.quality.issues
+                          .filter(i => i.severity === 'error')
+                          .slice(0, 8)
+                          .map((issue, idx) => (
+                            <div key={idx} className="text-xs p-2 bg-red-50 border border-red-200 rounded">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-red-700 font-semibold">error</span>
+                                <span className="text-gray-500">{issue.tool}</span>
+                              </div>
+                              <div className="text-gray-700 font-mono break-all mt-1">{issue.filePath}</div>
+                              <div className="text-red-700 mt-1">{issue.message}</div>
+                            </div>
+                          ))}
+                        {lastResult.quality.issues.filter(i => i.severity === 'error').length === 0 && (
+                          <div className="text-xs text-gray-500">No error-level issues found.</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-500">No lint/test issues reported.</div>
+                  )}
+
+                  <label className="block">
+                    <span className="text-xs text-gray-600">Notes (included in approval/merge)</span>
+                    <textarea
+                      className="mt-1 w-full p-2 border border-gray-300 rounded-lg text-sm"
+                      rows={3}
+                      value={approvalNotes}
+                      onChange={(e) => setApprovalNotes(e.target.value)}
+                      placeholder="Optional notes for reviewers / audit…"
+                      disabled={isApproving || isMerging}
+                    />
+                  </label>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!prNumber) return;
+                        setIsApproving(true);
+                        setPrUiError(null);
+                        try {
+                          await apiClient.approvePullRequest(prNumber, approvalNotes.trim() || undefined);
+                          await refreshPrData();
+                          void refreshHistory();
+                        } catch (error) {
+                          const msg = error instanceof Error ? error.message : 'Approve failed';
+                          setPrUiError(msg);
+                        } finally {
+                          setIsApproving(false);
+                        }
+                      }}
+                      disabled={isApproving || isMerging || !prStatus || prStatus.state !== 'open'}
+                      className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white font-semibold py-2 rounded-lg transition-colors"
+                      aria-label="Approve pull request"
+                    >
+                      {isApproving ? 'Approving…' : 'Approve'}
+                    </button>
+
+                    <button
+                      onClick={async () => {
+                        if (!prNumber) return;
+                        setIsMerging(true);
+                        setPrUiError(null);
+                        try {
+                          await apiClient.mergePullRequest({
+                            prNumber,
+                            method: 'squash',
+                            notes: approvalNotes.trim() || undefined
+                          });
+                          await refreshPrData();
+                          void refreshHistory();
+                        } catch (error) {
+                          const msg = error instanceof Error ? error.message : 'Merge failed';
+                          setPrUiError(msg);
+                        } finally {
+                          setIsMerging(false);
+                        }
+                      }}
+                      disabled={
+                        isApproving ||
+                        isMerging ||
+                        !prStatus ||
+                        prStatus.state !== 'open' ||
+                        prStatus.approvals < prStatus.requiredApprovals ||
+                        (prStatus.missingReviewers?.length ?? 0) > 0
+                      }
+                      className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white font-semibold py-2 rounded-lg transition-colors"
+                      aria-label="Merge pull request"
+                    >
+                      {isMerging ? 'Merging…' : 'Merge'}
+                    </button>
+                  </div>
+
+                  {prStatus && prStatus.approvals < prStatus.requiredApprovals && (
+                    <div className="text-xs text-gray-500">
+                      Merge requires {prStatus.requiredApprovals} approval(s). Current: {prStatus.approvals}.
+                    </div>
+                  )}
+
+                  {prStatus && (prStatus.missingReviewers?.length ?? 0) > 0 && (
+                    <div className="text-xs text-gray-500">
+                      Missing required reviewer approval(s): {prStatus.missingReviewers?.join(', ')}.
+                    </div>
+                  )}
+
+                  {lastResult?.qualityGatePassed === false && (
+                    <div className="text-xs text-gray-500">
+                      Quality gate failed (errors present). Review before merging.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* PR Diff & Inline Review Comments */}
+            {prNumber && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">PR Review</h3>
+                  <div className="text-xs text-gray-500">Auto-refreshes every 10s</div>
+                </div>
+
+                {/* Diff */}
+                <div className="mb-6">
+                  <div className="text-sm font-semibold text-gray-900 mb-2">Diff vs main</div>
+                  {prDiff?.files?.length ? (
+                    <div className="space-y-3 max-h-80 overflow-y-auto">
+                      {prDiff.files.slice(0, 12).map((f) => (
+                        <div key={f.filename} className="border border-gray-200 rounded">
+                          <div className="flex items-center justify-between px-3 py-2 bg-gray-50">
+                            <div className="text-xs font-mono text-gray-800 break-all">{f.filename}</div>
+                            <div className="text-xs text-gray-500">+{f.additions} −{f.deletions}</div>
+                          </div>
+                          <pre className="text-xs font-mono p-3 whitespace-pre-wrap overflow-x-auto">
+                            {(f.patch && f.patch.trim().length > 0) ? f.patch : 'No patch available (binary file or large diff).'}
+                          </pre>
+                        </div>
+                      ))}
+                      {prDiff.files.length > 12 && (
+                        <div className="text-xs text-gray-500">Showing first 12 files.</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-500">{isLoadingPrData ? 'Loading diff…' : 'No diff loaded'}</div>
+                  )}
+                </div>
+
+                {/* Comments */}
+                <div className="mb-6">
+                  <div className="text-sm font-semibold text-gray-900 mb-2">Inline review comments</div>
+                  {prComments.length > 0 ? (
+                    <div className="space-y-2 max-h-56 overflow-y-auto">
+                      {prComments.slice(0, 20).map((c) => (
+                        <div key={c.id} className="p-2 bg-gray-50 border border-gray-200 rounded">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs text-gray-700">
+                              <span className="font-semibold">{c.user}</span>
+                              <span className="text-gray-500"> · {c.path}{c.line ? `:${c.line}` : ''}</span>
+                            </div>
+                            <a className="text-xs text-purple-600 hover:text-purple-700 underline" href={c.url} target="_blank" rel="noreferrer">
+                              Open
+                            </a>
+                          </div>
+                          <div className="text-xs text-gray-700 mt-1 whitespace-pre-wrap">{c.body}</div>
+                        </div>
+                      ))}
+                      {prComments.length > 20 && (
+                        <div className="text-xs text-gray-500">Showing latest 20 comments.</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-500">No inline comments yet.</div>
+                  )}
+                </div>
+
+                {/* Inline comment form */}
+                <div>
+                  <div className="text-sm font-semibold text-gray-900 mb-2">Add inline comment</div>
+                  <div className="space-y-2">
+                    <label className="block">
+                      <span className="text-xs text-gray-600">File</span>
+                      <select
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-lg text-sm bg-white"
+                        value={commentPath}
+                        onChange={(e) => setCommentPath(e.target.value)}
+                        disabled={isPostingComment || !prDiff?.files?.length}
+                      >
+                        <option value="" disabled>Select a file</option>
+                        {(prDiff?.files ?? []).map((f) => (
+                          <option key={f.filename} value={f.filename}>{f.filename}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="text-xs text-gray-600">Line (1-based)</span>
+                        <input
+                          className="mt-1 w-full p-2 border border-gray-300 rounded-lg text-sm"
+                          value={commentLine}
+                          onChange={(e) => setCommentLine(e.target.value)}
+                          placeholder="e.g. 12"
+                          inputMode="numeric"
+                          disabled={isPostingComment}
+                        />
+                      </label>
+
+                      <label className="block">
+                        <span className="text-xs text-gray-600">Side</span>
+                        <select
+                          className="mt-1 w-full p-2 border border-gray-300 rounded-lg text-sm bg-white"
+                          defaultValue="RIGHT"
+                          disabled
+                          aria-label="Side (RIGHT)"
+                        >
+                          <option value="RIGHT">RIGHT (PR)</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <label className="block">
+                      <span className="text-xs text-gray-600">Comment</span>
+                      <textarea
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-lg text-sm"
+                        rows={3}
+                        value={commentBody}
+                        onChange={(e) => setCommentBody(e.target.value)}
+                        placeholder="Write a review comment…"
+                        disabled={isPostingComment}
+                      />
+                    </label>
+
+                    <button
+                      onClick={async () => {
+                        if (!prNumber) return;
+                        const line = Number(commentLine);
+                        if (!commentPath.trim() || !Number.isFinite(line) || line <= 0 || !commentBody.trim()) {
+                          setPrUiError('File, line, and comment body are required.');
+                          return;
+                        }
+                        setIsPostingComment(true);
+                        setPrUiError(null);
+                        try {
+                          await apiClient.createPullRequestReviewComment({
+                            prNumber,
+                            path: commentPath.trim(),
+                            line,
+                            body: commentBody.trim(),
+                            side: 'RIGHT'
+                          });
+                          setCommentBody('');
+                          await refreshPrData();
+                        } catch (error) {
+                          const msg = error instanceof Error ? error.message : 'Failed to post comment';
+                          setPrUiError(msg);
+                        } finally {
+                          setIsPostingComment(false);
+                        }
+                      }}
+                      disabled={isPostingComment || isLoadingPrData || !commentPath.trim() || !commentBody.trim()}
+                      className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white font-semibold py-2 rounded-lg transition-colors"
+                      aria-label="Post inline review comment"
+                    >
+                      {isPostingComment ? 'Posting…' : 'Post comment'}
+                    </button>
+                  </div>
+
+                  <div className="text-xs text-gray-500 mt-2">
+                    Note: GitHub may reject inline comments on some diffs; if that happens, use the PR link to comment directly.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Activity Logs */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -490,6 +1248,165 @@ export default function DigitalTwinMVP() {
               );
             })}
           </div>
+        </div>
+
+        {/* Workflow History (E4-T002) */}
+        <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">Workflow History</h3>
+            <button
+              onClick={() => void refreshHistory()}
+              disabled={isLoadingHistory}
+              className="text-xs px-2 py-1 rounded border border-gray-200 bg-gray-50 hover:bg-gray-100 disabled:opacity-50"
+              aria-label="Refresh workflow history"
+            >
+              Refresh
+            </button>
+          </div>
+
+          {historyError && (
+            <div className="text-sm p-3 bg-red-50 border border-red-200 rounded text-red-700" role="alert" aria-live="polite">
+              {historyError}
+            </div>
+          )}
+
+          {!historyError && historyItems.length === 0 && (
+            <div className="text-sm text-gray-500">{isLoadingHistory ? 'Loading…' : 'No past workflows yet.'}</div>
+          )}
+
+          {historyItems.length > 0 && (
+            <div className="space-y-6">
+              {/* List */}
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {historyItems.slice(0, 30).map(item => {
+                  const pill = historyStatusPill(item);
+                  return (
+                    <div key={item.id} className="flex items-start justify-between gap-3 p-3 border border-gray-200 rounded bg-gray-50">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-1 text-xs rounded-full ${pill.cls}`}>{pill.text}</span>
+                          <span className="text-xs text-gray-500 font-mono break-all">{item.id}</span>
+                          {typeof item.prNumber === 'number' && (
+                            <span className="text-xs text-gray-500">PR #{item.prNumber}</span>
+                          )}
+                          {item.pr?.state && (
+                            <span className="text-xs text-gray-500">· {item.pr.state} ({item.pr.approvals} approvals)</span>
+                          )}
+                        </div>
+                        <div className="text-sm text-gray-900 mt-1 line-clamp-2">
+                          {item.featureRequest || '(no feature request)'}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {new Date(item.createdAt).toLocaleString()} · Updated {new Date(item.updatedAt).toLocaleString()}
+                          {typeof item.qualityScore === 'number' ? ` · Quality ${item.qualityScore}/100` : ''}
+                          {typeof item.qualityGatePassed === 'boolean' ? (item.qualityGatePassed ? ' · Gate pass' : ' · Gate fail') : ''}
+                        </div>
+                        {item.artifactUrl && (
+                          <a className="text-xs text-purple-600 hover:text-purple-700 underline break-all" href={item.artifactUrl} target="_blank" rel="noreferrer">
+                            {item.artifactUrl}
+                          </a>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col items-end gap-2">
+                        <button
+                          onClick={async () => {
+                            try {
+                              const exported = await apiClient.exportWorkflowHistory(item.id);
+                              downloadJson(`workflow-${item.id}.json`, exported);
+                            } catch (error) {
+                              const msg = error instanceof Error ? error.message : 'Export failed';
+                              setHistoryError(msg);
+                            }
+                          }}
+                          className="text-xs px-2 py-1 rounded border border-gray-200 bg-white hover:bg-gray-100"
+                          aria-label={`Export workflow ${item.id}`}
+                        >
+                          Export
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {historyItems.length > 30 && (
+                  <div className="text-xs text-gray-500">Showing latest 30 workflows.</div>
+                )}
+              </div>
+
+              {/* Compare */}
+              <div className="border-t border-gray-200 pt-4">
+                <div className="text-sm font-semibold text-gray-900 mb-2">Compare two runs</div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <select
+                    className="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white"
+                    value={compareA}
+                    onChange={(e) => setCompareA(e.target.value)}
+                    disabled={isComparing}
+                    aria-label="Select run A"
+                  >
+                    {historyItems.map(i => (
+                      <option key={i.id} value={i.id}>{i.id}</option>
+                    ))}
+                  </select>
+
+                  <select
+                    className="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white"
+                    value={compareB}
+                    onChange={(e) => setCompareB(e.target.value)}
+                    disabled={isComparing}
+                    aria-label="Select run B"
+                  >
+                    {historyItems.map(i => (
+                      <option key={i.id} value={i.id}>{i.id}</option>
+                    ))}
+                  </select>
+
+                  <button
+                    onClick={async () => {
+                      if (!compareA || !compareB) return;
+                      setIsComparing(true);
+                      setHistoryError(null);
+                      try {
+                        const res = await apiClient.compareWorkflowHistory(compareA, compareB);
+                        setCompareResult(res);
+                      } catch (error) {
+                        const msg = error instanceof Error ? error.message : 'Compare failed';
+                        setHistoryError(msg);
+                      } finally {
+                        setIsComparing(false);
+                      }
+                    }}
+                    disabled={isComparing || !compareA || !compareB || compareA === compareB}
+                    className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white font-semibold py-2 rounded-lg transition-colors"
+                    aria-label="Compare workflows"
+                  >
+                    {isComparing ? 'Comparing…' : 'Compare'}
+                  </button>
+                </div>
+
+                {compareResult && (
+                  <div className="mt-4 space-y-2 max-h-96 overflow-y-auto">
+                    {compareResult.diff.map(d => (
+                      <div key={d.roleId} className="border border-gray-200 rounded">
+                        <div className="flex items-center justify-between px-3 py-2 bg-gray-50">
+                          <div className="text-xs font-semibold text-gray-900">{d.roleId}</div>
+                          <div className={`text-xs ${d.same ? 'text-green-700' : 'text-yellow-700'}`}>{d.same ? 'same' : 'changed'}</div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
+                          <pre className="text-xs font-mono p-3 whitespace-pre-wrap border-t md:border-t-0 md:border-r border-gray-200 max-h-48 overflow-y-auto">
+                            {d.a ? d.a.substring(0, 2000) : '(no output)'}
+                          </pre>
+                          <pre className="text-xs font-mono p-3 whitespace-pre-wrap border-t border-gray-200 max-h-48 overflow-y-auto">
+                            {d.b ? d.b.substring(0, 2000) : '(no output)'}
+                          </pre>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

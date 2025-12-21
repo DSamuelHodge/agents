@@ -1,123 +1,155 @@
-import { WorkflowOrchestrator } from './workflow';
-import { getRoleById } from './agents/roles';
-import { jsonSuccess, jsonError, validateRequestSize, summarizeIfNeeded, preflightResponse } from './utils/responses';
-import type { WorkflowRequest, AgentChatRequest } from './utils/types';
+import type { WorkflowEnv } from './agents/workflow-agent';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type WorkerEnv = Record<string, any>;
+// Export the WorkflowAgent class for Durable Object binding
+// Conditionally export WorkflowAgent to avoid importing Cloudflare-specific deps during Node/Vitest tests.
+const __isCloudflareRuntime = typeof (globalThis as Record<string, unknown>).WebSocketPair !== 'undefined'
+  || (typeof (globalThis as Record<string, unknown>).navigator === 'object'
+    && typeof (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent === 'string'
+    && ((globalThis as { navigator?: { userAgent?: string } }).navigator!.userAgent!.includes('Cloudflare-Workers')
+      || (globalThis as { navigator?: { userAgent?: string } }).navigator!.userAgent!.includes('workerd')));
 
-// Durable Object for workflow coordination
-export class WorkflowCoordinator {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  state: any; // DurableObjectState from @cloudflare/workers-types
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(state: any) {
-    this.state = state;
-  }
-
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    return Response.json({ ok: true, service: "workflow-coordinator", path: url.pathname });
-  }
+let WorkflowAgent: unknown;
+let WorkflowAgentSql: unknown;
+if (__isCloudflareRuntime) {
+  const mod = await import(/* @vite-ignore */ './agents/workflow-agent');
+  WorkflowAgent = mod.WorkflowAgent;
+  WorkflowAgentSql = mod.WorkflowAgentSql ?? mod.WorkflowAgent;
+} else {
+  // Provide a harmless stub in non-Cloudflare environments
+  WorkflowAgent = class WorkflowAgentStub {};
+  WorkflowAgentSql = WorkflowAgent;
 }
 
-// Durable Object stub (types from Cloudflare Workers - any type acceptable here)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Env = Record<string, any>;
+export { WorkflowAgent, WorkflowAgentSql };
 
+// Also export the old WorkflowCoordinator for backward compatibility during migration
+export { WorkflowCoordinator } from './index-legacy';
+
+/**
+ * Main Worker fetch handler
+ * 
+ * Routes requests to:
+ * - Agents SDK agents (WorkflowAgent) via /agent/:name pattern
+ * - Legacy HTTP endpoints for backward compatibility
+ */
 export default {
-  async fetch(request: Request, env: WorkerEnv): Promise<Response> {
+  async fetch(request: Request, env: WorkflowEnv): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Handle CORS preflight
+    // CORS preflight
     if (request.method === 'OPTIONS') {
-      return preflightResponse();
-    }
-
-    // Validate request size
-    const sizeError = validateRequestSize(request);
-    if (sizeError) {
-      return jsonError(sizeError, 413, 'Request body exceeds 256 KB limit. Please reduce payload size.');
-    }
-
-    // Status endpoint
-    if (path === '/status') {
-      return jsonSuccess({
-        ok: true,
-        services: {
-          worker: 'healthy',
-          durableObject: Boolean(env.WORKFLOW_DO),
-          gemini: Boolean(env.GEMINI_API_KEY)
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Max-Age': '86400'
         }
       });
     }
 
-    // Check API key early for routes that require it
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const hasApiKey = Boolean((env as any).GEMINI_API_KEY);
+    // Health check early to avoid false negatives from agent routing
+    if (path === '/' || path === '/status') {
+      if (path === '/') {
+        return Response.redirect(url.origin + '/status', 302);
+      }
+      return Response.json({
+        ok: true,
+        services: {
+          worker: 'healthy',
+          agentSDK: Boolean(env.WORKFLOW_AGENT),
+          gemini: Boolean(env.GEMINI_API_KEY),
+          github: Boolean(env.GITHUB_TOKEN)
+        },
+        migration: {
+          status: 'in-progress',
+          agentSDKEnabled: true,
+          legacyEndpointsDeprecated: false
+        }
+      }, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'application/json'
+        }
+      });
+    }
 
-    // POST /workflow - Run full 9-agent sequence
-    if (path === '/workflow' && request.method === 'POST') {
+    // Try to route to Agents SDK first
+    // Pattern: /:agent/:name or /workflow-agent/:instance-id
+    // Avoid top-level import to prevent Node/Vitest from resolving Cloudflare-specific protocols.
+    // The dynamic import is ignored by Vite pre-bundling to keep it runtime-only.
+    // Only attempt import when running inside Cloudflare Workers runtime
+    const isCloudflareRuntime = typeof (globalThis as Record<string, unknown>).WebSocketPair !== 'undefined'
+      || (typeof (globalThis as Record<string, unknown>).navigator === 'object'
+        && typeof (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent === 'string'
+        && ((globalThis as { navigator?: { userAgent?: string } }).navigator!.userAgent!.includes('Cloudflare-Workers')
+          || (globalThis as { navigator?: { userAgent?: string } }).navigator!.userAgent!.includes('workerd')));
+
+    if (isCloudflareRuntime) {
       try {
-        if (!hasApiKey) {
-          return jsonError('GEMINI_API_KEY not configured', 500, 'Server configuration error');
+        const mod = await import(/* @vite-ignore */ 'agents');
+        if (typeof mod.routeAgentRequest === 'function') {
+          const agentResponse = await mod.routeAgentRequest(request, env as unknown as Record<string, unknown>);
+          if (agentResponse) {
+            return agentResponse;
+          }
         }
-        const body = await request.json() as WorkflowRequest;
-        
-        if (!body.featureRequest || typeof body.featureRequest !== 'string') {
-          return jsonError('featureRequest is required', 400, 'Provide a valid feature description');
-        }
-
-        const summarized = summarizeIfNeeded(body.featureRequest);
-        // Lazily construct orchestrator inside try to avoid top-level crashes
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const orchestrator = new WorkflowOrchestrator(String((env as any).GEMINI_API_KEY));
-        const workflow = await orchestrator.runWorkflow(summarized);
-
-        return jsonSuccess(workflow, {
-          duration: Date.now() - new Date(workflow.createdAt).getTime(),
-          truncated: summarized.length < body.featureRequest.length
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Workflow execution failed';
-        return jsonError(message, 500, String(error));
+      } catch (_) {
+        // Agents SDK not available in this environment; fall through to legacy handling.
       }
     }
 
-    // POST /agent/:role/chat - Single agent interaction
-    if (path.startsWith('/agent/') && path.endsWith('/chat') && request.method === 'POST') {
-      try {
-        if (!hasApiKey) {
-          return jsonError('GEMINI_API_KEY not configured', 500, 'Server configuration error');
+    // Legacy status endpoint
+    if (path === '/status') {
+      return Response.json({
+        ok: true,
+        services: {
+          worker: 'healthy',
+          agentSDK: Boolean(env.WORKFLOW_AGENT),
+          gemini: Boolean(env.GEMINI_API_KEY),
+          github: Boolean(env.GITHUB_TOKEN)
+        },
+        migration: {
+          status: 'in-progress',
+          agentSDKEnabled: true,
+          legacyEndpointsDeprecated: false
         }
-        const roleId = path.split('/')[2];
-        const role = getRoleById(roleId);
-        
-        if (!role) {
-          return jsonError(`Invalid role: ${roleId}`, 400, 'Role not found. Valid roles: pm, architect, backend, frontend, database, devops, qa, tech_writer, project_mgr');
+      }, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'application/json'
         }
-
-        const body = await request.json() as AgentChatRequest;
-        
-        if (!body.message || typeof body.message !== 'string') {
-          return jsonError('message is required', 400);
-        }
-
-        // Lazily construct orchestrator inside try to avoid top-level crashes
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const orchestrator = new WorkflowOrchestrator(String((env as any).GEMINI_API_KEY));
-        const output = await orchestrator.runAgentChat(roleId, body.message, body.context);
-
-        return jsonSuccess({ roleId, output, role: role.name });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Agent chat failed';
-        return jsonError(message, 500, String(error));
-      }
+      });
     }
 
-    // 404 for unknown routes
-    return jsonError('Not found', 404, `Path ${path} not recognized`);
-  },
+    // For now, proxy other requests to legacy endpoints
+    // This allows gradual migration
+    try {
+      const legacyModule = await import('./index-legacy');
+      if (legacyModule.default && typeof legacyModule.default.fetch === 'function') {
+        return await legacyModule.default.fetch(request, env);
+      }
+    } catch (error) {
+      console.error('Failed to load legacy module:', error);
+    }
+
+    return Response.json({
+      ok: false,
+      error: 'Not Found',
+      message: 'Use /workflow-agent/:instance-id for Agents SDK or legacy endpoints',
+      availablePatterns: [
+        '/workflow-agent/:instance-id - Agent SDK WebSocket/HTTP',
+        '/status - Health check',
+        'Legacy endpoints - See index-legacy.ts'
+      ]
+    }, {
+      status: 404,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+      }
+    });
+  }
 };

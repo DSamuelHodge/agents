@@ -5,6 +5,27 @@ export interface WorkflowRun {
   steps: AgentStep[];
   createdAt: string;
   updatedAt: string;
+  artifactUrl?: string;
+  prNumber?: number;
+  branch?: string;
+  quality?: CodeQualitySummary;
+  qualityGatePassed?: boolean;
+}
+
+export interface CodeQualityIssue {
+  tool: 'prettier' | 'typescript' | 'sql' | 'json' | 'yaml' | 'python' | 'project';
+  severity: 'error' | 'warning';
+  filePath: string;
+  message: string;
+}
+
+export interface CodeQualitySummary {
+  score: number; // 0-100
+  errors: number;
+  warnings: number;
+  formattedFiles: number;
+  coverageEstimate: number; // 0-100 heuristic
+  issues: CodeQualityIssue[];
 }
 
 export interface AgentStep {
