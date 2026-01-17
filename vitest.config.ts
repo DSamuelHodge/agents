@@ -13,7 +13,7 @@ export default defineConfig({
   },
   // Prevent default test collection; use project-specific includes below.
   test: {
-    include: []
+    include: ['**/*.test.ts', '**/*.test.tsx']
   },
   projects: [
     // Frontend + general Node/JSDOM tests
@@ -22,7 +22,7 @@ export default defineConfig({
         globals: true,
         environment: 'jsdom',
         setupFiles: [],
-        include: ['tests/frontend/**/*.test.ts', 'tests/**/*.test.tsx'],
+        include: ['**/*.test.ts', '**/*.test.tsx'],
         exclude: ['node_modules', 'dist', '.idea', '.git', '.cache', 'tests/worker/**'],
         coverage: {
           provider: 'v8',
@@ -39,13 +39,7 @@ export default defineConfig({
     defineWorkersConfig({
       test: {
         globals: true,
-        include: [
-          'tests/worker/settings.test.ts',
-          'tests/worker/agent-chat.test.ts',
-          'tests/worker/deploy.test.ts',
-          'tests/worker/audit.test.ts',
-          'tests/worker/artifacts.test.ts'
-        ],
+        include: ['**/*.test.ts', '**/*.test.tsx'],
         exclude: ['tests/worker/workflow.test.ts'],
         poolOptions: {
           workers: {

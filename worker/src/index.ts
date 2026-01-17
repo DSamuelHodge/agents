@@ -101,7 +101,33 @@ export default {
       }
     }
 
-    // Legacy status endpoint
+    // Handle /workflow-agent/* paths explicitly for Durable Object routing
+    if (path.startsWith('/workflow-agent/')) {
+      const instanceId = path.split('/')[2]; // Extract instance ID (e.g., 'main' from '/workflow-agent/main')
+      if (instanceId && env.WORKFLOW_AGENT) {
+        const id = `workflow-agent:${instanceId}`;
+        const stub = env.WORKFLOW_AGENT.get(env.WORKFLOW_AGENT.idFromName(id));
+        return stub.fetch(request);
+      }
+      return Response.json({
+        ok: false,
+        error: 'Not Found',
+        message: 'Invalid workflow-agent instance ID or binding not configured',
+        availablePatterns: [
+          '/workflow-agent/:instance-id - Agent SDK WebSocket/HTTP',
+          '/status - Health check',
+          'Legacy endpoints - See index-legacy.ts'
+        ]
+      }, {
+        status: 404,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
+    // Legacy status endpoint (redundant but kept for compatibility)
     if (path === '/status') {
       return Response.json({
         ok: true,
