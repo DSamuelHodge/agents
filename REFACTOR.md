@@ -4,6 +4,8 @@
 
 This codebase implements a multi-agent AI workflow system on Cloudflare Workers with experimental features and legacy patterns. The refactoring plan focuses on:
 
+for CLOUDFLARE DOCS refer to https://developers.cloudflare.com/llms.txt
+
 1. **Agent SDK Migration** - Complete migration from legacy HTTP to Cloudflare Agents SDK
 2. **Workflow Orchestration** - Leverage Cloudflare Workflows for durable execution
 3. **Storage Optimization** - Modernize persistence with D1, R2, and optimized Durable Objects
