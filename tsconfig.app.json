@@ -16,6 +16,12 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Path aliases */
+    "baseUrl": ".",
+    "paths": {
+      "@worker/*": ["worker/src/*"]
+    },
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
@@ -25,5 +31,5 @@
     "noUncheckedSideEffectImports": true,
     "forceConsistentCasingInFileNames": true  
   },
-  "include": ["src"]
+  "include": ["src", "tests"]
 }
