@@ -43,7 +43,7 @@ export class WorkflowAgentClient {
           try {
             const evt = JSON.parse(String(ev.data)) as AgentEvent;
             // Resolve pending by id first
-            const id = (evt as any)?.id as string | undefined;
+            const id = (evt as unknown as { id?: string })?.id;
             if (id && this.pending.has(id)) {
               const cb = this.pending.get(id)!;
               this.pending.delete(id);

@@ -17,15 +17,6 @@ export interface LintResult {
   formattedFiles: number;
 }
 
-function isTsLike(filePath: string): boolean {
-  return (
-    filePath.endsWith('.ts') ||
-    filePath.endsWith('.tsx') ||
-    filePath.endsWith('.js') ||
-    filePath.endsWith('.jsx')
-  );
-}
-
 function prettierParserForPath(filePath: string): string | undefined {
   if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) return 'typescript';
   if (filePath.endsWith('.js') || filePath.endsWith('.jsx')) return 'babel';
@@ -45,8 +36,7 @@ async function formatWithPrettier(
 
   try {
     const prettier = await import('prettier/standalone');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const plugins: any[] = [];
+    const plugins: unknown[] = [];
 
     // Load only what we might need.
     if (parser === 'typescript') {
@@ -65,7 +55,7 @@ async function formatWithPrettier(
 
     const formatted = await prettier.format(content, {
       parser,
-      plugins
+      plugins: plugins as unknown
     });
 
     return { formatted };
@@ -129,7 +119,7 @@ async function validateYaml(filePath: string, content: string): Promise<Validati
   }
 }
 
-function validateTypeScript(_filePath: string, _content: string): ValidationIssue[] {
+function validateTypeScript(): ValidationIssue[] {
   // Skip TS validation in Worker runtime
   return [];
 }
@@ -150,7 +140,7 @@ export async function lintAndFormatProject(
     if (yamlIssue) issues.push(yamlIssue);
 
     // TypeScript/JS syntax diagnostics (via TS)
-    issues.push(...validateTypeScript(filePath, original));
+    issues.push(...validateTypeScript());
 
     // Formatting (best-effort)
     const sqlFormatted = await formatSql(filePath, original);

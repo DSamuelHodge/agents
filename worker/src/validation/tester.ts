@@ -47,7 +47,7 @@ function validatePython(filePath: string, content: string): ValidationIssue[] {
   return issues;
 }
 
-function validateTsJs(filePath: string, content: string): ValidationIssue[] {
+function validateTsJs(filePath: string): ValidationIssue[] {
   if (
     !filePath.endsWith('.ts') &&
     !filePath.endsWith('.tsx') &&
@@ -79,7 +79,7 @@ export function validateTestsAndSyntax(
   const codeFiles = Object.keys(files).filter(isCodeFile);
 
   for (const [filePath, content] of Object.entries(files)) {
-    issues.push(...validateTsJs(filePath, content));
+    issues.push(...validateTsJs(filePath));
     issues.push(...validatePython(filePath, content));
   }
 

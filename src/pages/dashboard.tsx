@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, Users, Zap, CheckCircle, AlertCircle, Code, Database, Settings, TestTube, BookOpen, Briefcase, Layers } from 'lucide-react';
 import { apiClient } from '../services/api';
-import { agentClient } from '../services/agent';
 import type {
   WorkflowRun,
   AgentStep,

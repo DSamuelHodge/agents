@@ -11,9 +11,11 @@ import type { WorkflowState } from '../../worker/src/agents/workflow-agent';
 export function useWorkflowAgent(instanceId: string = 'main') {
   const resolvedHost = (() => {
     try {
-      const url = (import.meta as any).env?.VITE_WORKER_URL as string | undefined;
+      const url = import.meta.env?.VITE_WORKER_URL as string | undefined;
       if (url) return new URL(url).host;
-    } catch {}
+    } catch (error) {
+      console.warn('Failed to parse VITE_WORKER_URL:', error);
+    }
     return typeof window !== 'undefined' ? window.location.host : '127.0.0.1:8787';
   })();
   const agent = useAgent<WorkflowState>({
@@ -37,9 +39,11 @@ export function useWorkflowAgent(instanceId: string = 'main') {
 export function useWorkflowExecution(instanceId: string = 'main') {
   const resolvedHost = (() => {
     try {
-      const url = (import.meta as any).env?.VITE_WORKER_URL as string | undefined;
+      const url = import.meta.env?.VITE_WORKER_URL as string | undefined;
       if (url) return new URL(url).host;
-    } catch {}
+    } catch (error) {
+      console.warn('Failed to parse VITE_WORKER_URL:', error);
+    }
     return typeof window !== 'undefined' ? window.location.host : '127.0.0.1:8787';
   })();
   const agent = useAgent<WorkflowState>({
@@ -58,8 +62,7 @@ export function useWorkflowExecution(instanceId: string = 'main') {
     setError(null);
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (agent as any).startWorkflow(featureRequest);
+      const result = await agent.call('startWorkflow', [featureRequest]) as Record<string, unknown>;
       setCurrentWorkflow(result);
       return result;
     } catch (err) {
@@ -74,8 +77,7 @@ export function useWorkflowExecution(instanceId: string = 'main') {
   // Get a specific workflow by ID
   const getWorkflow = useCallback(async (workflowId: string): Promise<Record<string, unknown> | null> => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (agent as any).getWorkflow(workflowId);
+      const result = await agent.call('getWorkflow', [workflowId]) as Record<string, unknown>;
       return result as Record<string, unknown>;
     } catch (err) {
       console.error('Failed to get workflow:', err);
@@ -86,8 +88,7 @@ export function useWorkflowExecution(instanceId: string = 'main') {
   // Get workflow history
   const getHistory = useCallback(async (limit: number = 50): Promise<Record<string, unknown>[]> => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (agent as any).getHistory(limit);
+      const result = await agent.call('getHistory', [limit]) as Record<string, unknown>[];
       return result as Record<string, unknown>[];
     } catch (err) {
       console.error('Failed to get history:', err);
@@ -98,8 +99,7 @@ export function useWorkflowExecution(instanceId: string = 'main') {
   // Get audit trail for a workflow
   const getAudit = useCallback(async (auditId: string): Promise<Record<string, unknown>[]> => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (agent as any).getAudit(auditId);
+      const result = await agent.call('getAudit', [auditId]) as Record<string, unknown>[];
       return result as Record<string, unknown>[];
     } catch (err) {
       console.error('Failed to get audit:', err);
@@ -110,8 +110,7 @@ export function useWorkflowExecution(instanceId: string = 'main') {
   // Compare two workflows
   const compareWorkflows = useCallback(async (workflowIdA: string, workflowIdB: string): Promise<Record<string, unknown> | null> => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (agent as any).compareWorkflows(workflowIdA, workflowIdB);
+      const result = await agent.call('compareWorkflows', [workflowIdA, workflowIdB]) as Record<string, unknown>;
       return result as Record<string, unknown>;
     } catch (err) {
       console.error('Failed to compare workflows:', err);
@@ -122,8 +121,7 @@ export function useWorkflowExecution(instanceId: string = 'main') {
   // Export workflow with audit
   const exportWorkflow = useCallback(async (workflowId: string): Promise<Record<string, unknown> | null> => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (agent as any).exportWorkflow(workflowId);
+      const result = await agent.call('exportWorkflow', [workflowId]) as Record<string, unknown>;
       return result as Record<string, unknown>;
     } catch (err) {
       console.error('Failed to export workflow:', err);
@@ -154,9 +152,11 @@ export function useWorkflowExecution(instanceId: string = 'main') {
 export function useWorkflowSettings(instanceId: string = 'main') {
   const resolvedHost = (() => {
     try {
-      const url = (import.meta as any).env?.VITE_WORKER_URL as string | undefined;
+      const url = import.meta.env?.VITE_WORKER_URL as string | undefined;
       if (url) return new URL(url).host;
-    } catch {}
+    } catch (error) {
+      console.warn('Failed to parse VITE_WORKER_URL:', error);
+    }
     return typeof window !== 'undefined' ? window.location.host : '127.0.0.1:8787';
   })();
   const agent = useAgent<WorkflowState>({
@@ -175,8 +175,7 @@ export function useWorkflowSettings(instanceId: string = 'main') {
     setError(null);
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const updated = await (agent as any).updateSettings(newSettings);
+      const updated = await agent.call('updateSettings', [newSettings]) as Record<string, unknown>;
       setSettings(updated);
       return updated;
     } catch (err) {
@@ -191,8 +190,7 @@ export function useWorkflowSettings(instanceId: string = 'main') {
   // Refresh settings from server
   const refreshSettings = useCallback(async () => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (agent as any).getSettings();
+      const result = await agent.call('getSettings', []) as Record<string, unknown>;
       setSettings(result);
       return result;
     } catch (err) {
@@ -216,21 +214,7 @@ export function useWorkflowSettings(instanceId: string = 'main') {
  * @param instanceId - Agent instance identifier
  * @returns Connection status information
  */
-export function useWorkflowConnection(instanceId: string = 'main') {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const resolvedHost = (() => {
-    try {
-      const url = (import.meta as any).env?.VITE_WORKER_URL as string | undefined;
-      if (url) return new URL(url).host;
-    } catch {}
-    return typeof window !== 'undefined' ? window.location.host : '127.0.0.1:8787';
-  })();
-  const agent = useAgent<WorkflowState>({
-    agent: 'workflow-agent',
-    name: instanceId,
-    host: resolvedHost
-  });
-  
+export function useWorkflowConnection() {
   const [isConnected] = useState(true);
   const [activeConnections] = useState(0);
   const [lastUpdated] = useState<string | null>(null);
@@ -258,9 +242,11 @@ export function useWorkflowHistory(
 ) {
   const resolvedHost = (() => {
     try {
-      const url = (import.meta as any).env?.VITE_WORKER_URL as string | undefined;
+      const url = import.meta.env?.VITE_WORKER_URL as string | undefined;
       if (url) return new URL(url).host;
-    } catch {}
+    } catch (error) {
+      console.warn('Failed to parse VITE_WORKER_URL:', error);
+    }
     return typeof window !== 'undefined' ? window.location.host : '127.0.0.1:8787';
   })();
   const agent = useAgent<WorkflowState>({
@@ -279,8 +265,7 @@ export function useWorkflowHistory(
     setError(null);
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (agent as any).getHistory(limit);
+      const result = await agent.call('getHistory', [limit]) as Record<string, unknown>[];
       setHistory((result as Record<string, unknown>[]) || []);
       return result;
     } catch (err) {

@@ -38,7 +38,7 @@ export class ArtifactR2Storage {
     // Simplified compression - in production, use proper tar/zip library
     const encoder = new TextEncoder();
     const data = JSON.stringify(files);
-    return encoder.encode(data);
+    return encoder.encode(data).buffer;
   }
 
   private async extractTarball(tarball: ArrayBuffer): Promise<Record<string, string>> {

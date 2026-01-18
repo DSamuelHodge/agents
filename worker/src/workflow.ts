@@ -1,4 +1,4 @@
-import { GeminiClient } from './utils/gemini';
+import { AIGatewayClient, LLMChatParams } from './ai-gateway/client';
 import { WORKFLOW_SEQUENCE, getRoleById } from './agents/roles';
 import { WorkflowRun, AgentStep } from './utils/types';
 import { ArtifactManager } from './artifacts/manager';
@@ -25,18 +25,18 @@ const MAX_OUTPUT_SIZE = 32 * 1024; // 32KB per step output
 // const MAX_CONTEXT_SIZE = 128 * 1024; // 128KB total context
 
 export class WorkflowOrchestrator {
-  private gemini: GeminiClient;
+  private aiGateway: AIGatewayClient;
   private metrics: WorkflowMetrics;
   private artifactManager?: ArtifactManager;
   private enableFeedbackLoop: boolean;
   private auditStore?: AuditStore;
 
   constructor(
-    geminiApiKey: string,
+    aiGateway: AIGatewayClient,
     artifactManager?: ArtifactManager,
     options?: { enableFeedbackLoop?: boolean; auditStore?: AuditStore }
   ) {
-    this.gemini = new GeminiClient({ apiKey: geminiApiKey });
+    this.aiGateway = aiGateway;
     this.artifactManager = artifactManager;
     this.enableFeedbackLoop = Boolean(options?.enableFeedbackLoop);
     this.auditStore = options?.auditStore;
@@ -135,7 +135,17 @@ export class WorkflowOrchestrator {
           ? `${featureRequest}\n\nPrevious Agent Outputs:${contextStr}`
           : featureRequest;
 
-        const output = await this.gemini.generate(fullInput, role.systemPrompt);
+        // Use AI Gateway for LLM calls
+        const llmParams: Omit<LLMChatParams, 'agentId'> = {
+          provider: 'google',
+          model: 'gemini-pro',
+          messages: [
+            { role: 'system', content: role.systemPrompt },
+            { role: 'user', content: fullInput }
+          ]
+        };
+        const llmResult = await this.aiGateway.chat({ ...llmParams, agentId: roleId });
+        const output = llmResult.content;
         const stepDuration = Date.now() - stepStartTime;
 
         // Truncate output if too large
@@ -272,7 +282,16 @@ export class WorkflowOrchestrator {
                 .join('');
 
               const message = `${req.prompt}\n\nCurrent file contents:${fileContext}`;
-              const agentOut = await this.gemini.generate(message, role.systemPrompt);
+              const result = await this.aiGateway.chat({
+                provider: 'google',
+                model: 'gemini-1.5-flash',
+                messages: [
+                  { role: 'system', content: role.systemPrompt },
+                  { role: 'user', content: message }
+                ],
+                agentId: role.id
+              });
+              const agentOut = result.content;
               const updates = parseFileUpdatesFromAgentOutput(agentOut);
               if (updates.length === 0) continue;
 
@@ -361,6 +380,16 @@ export class WorkflowOrchestrator {
       throw new Error(`Invalid role: ${roleId}`);
     }
 
-    return this.gemini.generateWithContext(message, role.systemPrompt, context || {});
+    const contextStr = context ? '\n\nContext:\n' + Object.entries(context).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
+    const result = await this.aiGateway.chat({
+      provider: 'google',
+      model: 'gemini-1.5-flash',
+      messages: [
+        { role: 'system', content: role.systemPrompt },
+        { role: 'user', content: message + contextStr }
+      ],
+      agentId: role.id
+    });
+    return result.content;
   }
 }

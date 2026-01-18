@@ -1,4 +1,5 @@
 import { WorkflowOrchestrator } from './workflow';
+import { AIGatewayClient } from './ai-gateway/client';
 import { getRoleById } from './agents/roles';
 import { jsonSuccess, jsonError, validateRequestSize, summarizeIfNeeded, preflightResponse } from './utils/responses';
 import type { WorkflowRequest, AgentChatRequest, WorkflowRun } from './utils/types';
@@ -7,7 +8,7 @@ import { GitHubClient } from './utils/github';
 import { DeploymentManager } from './deploy/manager';
 import { DurableObjectAuditStore, DurableObjectAuditClient } from './audit';
 import type { AuditEventType } from './audit';
-import type { DurableObjectState } from '@cloudflare/workers-types';
+import type { DurableObjectState, D1Database } from '@cloudflare/workers-types';
 
 type WorkerEnv = Record<string, unknown>;
 
@@ -1328,7 +1329,7 @@ export default {
         }
 
         const orchestrator = new WorkflowOrchestrator(
-          String(env.GEMINI_API_KEY ?? ''),
+          new AIGatewayClient('https://gateway.ai.cloudflare.com/v1', env.D1 as D1Database),
           artifactManager,
           {
             enableFeedbackLoop:
@@ -1371,7 +1372,7 @@ export default {
         }
 
         // Lazily construct orchestrator inside try to avoid top-level crashes
-        const orchestrator = new WorkflowOrchestrator(String(env.GEMINI_API_KEY ?? ''));
+        const orchestrator = new WorkflowOrchestrator(new AIGatewayClient('https://gateway.ai.cloudflare.com/v1', env.D1 as D1Database));
         const output = await orchestrator.runAgentChat(roleId, body.message, body.context);
 
         return jsonSuccess({ roleId, output, role: role.name });

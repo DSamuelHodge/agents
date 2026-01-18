@@ -9,7 +9,7 @@ export interface ValidationRequest {
 
 export interface ValidationResponse {
   passed: boolean;
-  results: Record<string, any>;
+  results: Record<string, unknown>;
   errors?: string[];
 }
 
@@ -41,7 +41,7 @@ export default {
     }
   },
 
-  private async lintFiles(files: Record<string, string>): Promise<ValidationResponse> {
+  async lintFiles(files: Record<string, string>): Promise<ValidationResponse> {
     // Simplified linting - in production, use ESLint or similar
     const errors: string[] = [];
     for (const [path, content] of Object.entries(files)) {
@@ -56,7 +56,7 @@ export default {
     };
   },
 
-  private async formatFiles(files: Record<string, string>): Promise<ValidationResponse> {
+  async formatFiles(files: Record<string, string>): Promise<ValidationResponse> {
     const formatted: Record<string, string> = {};
     for (const [path, content] of Object.entries(files)) {
       try {
@@ -64,7 +64,7 @@ export default {
           parser: this.inferParser(path),
           plugins: prettierPlugins
         });
-      } catch (error) {
+      } catch {
         formatted[path] = content; // Keep original if formatting fails
       }
     }
@@ -74,7 +74,7 @@ export default {
     };
   },
 
-  private async checkQuality(files: Record<string, string>): Promise<ValidationResponse> {
+  async checkQuality(files: Record<string, string>): Promise<ValidationResponse> {
     const lintResult = await this.lintFiles(files);
     const formatResult = await this.formatFiles(files);
 
@@ -90,14 +90,14 @@ export default {
     };
   },
 
-  private inferParser(path: string): string {
+  inferParser(path: string): string {
     if (path.endsWith('.ts') || path.endsWith('.tsx')) return 'typescript';
     if (path.endsWith('.js') || path.endsWith('.jsx')) return 'babel';
     if (path.endsWith('.json')) return 'json';
     return 'babel'; // default
   },
 
-  private calculateQualityScore(
+  calculateQualityScore(
     lint: ValidationResponse,
     format: ValidationResponse,
     files: Record<string, string>

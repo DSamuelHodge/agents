@@ -1,4 +1,5 @@
 import type { WorkflowEnv } from './agents/workflow-agent';
+import type { DurableObjectNamespace } from '@cloudflare/workers-types';
 
 // Export the WorkflowAgent class for Durable Object binding
 // Conditionally export WorkflowAgent to avoid importing Cloudflare-specific deps during Node/Vitest tests.
@@ -96,7 +97,7 @@ export default {
             return agentResponse;
           }
         }
-      } catch (_) {
+      } catch {
         // Agents SDK not available in this environment; fall through to legacy handling.
       }
     }
@@ -106,8 +107,9 @@ export default {
       const instanceId = path.split('/')[2]; // Extract instance ID (e.g., 'main' from '/workflow-agent/main')
       if (instanceId && env.WORKFLOW_AGENT) {
         const id = `workflow-agent:${instanceId}`;
-        const stub = env.WORKFLOW_AGENT.get(env.WORKFLOW_AGENT.idFromName(id));
-        return stub.fetch(request);
+        const ns = env.WORKFLOW_AGENT as DurableObjectNamespace;
+        const stub = ns.get(ns.idFromName(id));
+        return stub.fetch(request as unknown) as unknown as Promise<Response>;
       }
       return Response.json({
         ok: false,

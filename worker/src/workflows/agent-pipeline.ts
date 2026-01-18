@@ -1,4 +1,5 @@
 // Cloudflare Workflows Entrypoint for Agent Pipeline
+// @ts-expect-error Cloudflare workflows module not typed
 import { WorkflowEntrypoint, WorkflowStep } from 'cloudflare:workflows';
 import type { WorkflowEvent, WorkflowRequest } from './types';
 import { ArtifactR2Storage } from '../storage/artifacts-r2';
@@ -69,7 +70,7 @@ export class AgentPipeline extends WorkflowEntrypoint {
     }
 
     // Generate response using Gemini
-    const response = await this.generateAgentResponse(role, input, context);
+    const response = await this.generateAgentResponse(role, input);
 
     // Cache the response
     await cache.setCachedResponse(role, cacheKey, response);
@@ -77,9 +78,8 @@ export class AgentPipeline extends WorkflowEntrypoint {
     return response;
   }
 
-  private async generateAgentResponse(role: string, input: string, context?: Record<string, string>): Promise<string> {
+  private async generateAgentResponse(role: string, input: string): Promise<string> {
     // Simplified - in production, use proper AI SDK
-    const prompt = this.buildPrompt(role, input, context);
     // Mock response for now
     return `Response from ${role} for: ${input}`;
   }
@@ -128,6 +128,4 @@ export class AgentPipeline extends WorkflowEntrypoint {
       validated.passed ? 1 : 0
     ).run();
   }
-}
-}
 }

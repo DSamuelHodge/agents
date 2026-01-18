@@ -28,7 +28,7 @@ export function AgentSDKDashboard() {
     isConnected,
     reconnectAttempts,
     activeConnections
-  } = useWorkflowConnection('main');
+  } = useWorkflowConnection();
 
   const handleStartWorkflow = async () => {
     if (!featureRequest.trim()) return;
@@ -137,8 +137,6 @@ export function AgentSDKDashboard() {
         {/* Current Workflow Progress */}
         {currentWorkflow && (
           <div className="bg-white rounded-lg shadow-sm p-6">
-            {/** Type guard/cast for workflow shape */}
-            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
             {(() => {
               // Import types lazily to avoid module cycles
               type AgentStep = {
@@ -231,8 +229,7 @@ export function AgentSDKDashboard() {
             )}
             
             {/* Workflow Metrics */}
-                  {true && (
-              <div className="mt-4 grid grid-cols-3 gap-4">
+            <div className="mt-4 grid grid-cols-3 gap-4">
                 <div className="p-3 bg-blue-50 rounded-lg">
                   <div className="text-xs text-blue-600 font-medium">
                     Total Duration
@@ -260,7 +257,6 @@ export function AgentSDKDashboard() {
                   </div>
                 </div>
               </div>
-            )}
                 </>
               );
             })()}

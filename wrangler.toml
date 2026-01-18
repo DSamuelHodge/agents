@@ -63,23 +63,16 @@ GITHUB_REPO = "generated-projects"  # GitHub repo name for generated code artifa
 # Verify secrets are not in client bundles: npm run build && grep -r "GEMINI\|GITHUB_TOKEN" dist/
 
 # Optional bindings (commented out - uncomment if needed)
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "digital-twin-db"
-# database_id = "your-d1-database-id"
+# D1 Database binding for agent platform
+[[d1_databases]]
+binding = "DB"
+database_name = "agents-platform"
+database_id = "your-d1-database-id"
 
-# [[r2_buckets]]
-# binding = "ARTIFACTS"
-# bucket_name = "digital-twin-artifacts"
-
-# [[vectorize]]
-# binding = "VECTORIZE"
-# index_name = "agent-outputs"
-
-# KV Namespace (optional - for caching)
-# [[kv_namespaces]]
-# binding = "CACHE"
-# id = "your-kv-namespace-id"
+# R2 bucket for artifacts
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "agent-artifacts"
 
 # Analytics Engine (optional - for monitoring)
 [[analytics_engine_datasets]]

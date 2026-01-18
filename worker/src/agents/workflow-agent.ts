@@ -2,9 +2,10 @@ import { Agent, callable } from 'agents';
 import type { Connection, ConnectionContext, WSMessage } from 'agents';
 import { WorkflowOrchestrator } from '../workflow';
 import { ArtifactManager } from '../artifacts/manager';
+import { AIGatewayClient } from '../ai-gateway/client';
 import type { WorkflowRun } from '../utils/types';
 
-// Environment interface
+import type { D1Database } from '@cloudflare/workers-types';
 export interface WorkflowEnv {
   GEMINI_API_KEY: string;
   GITHUB_TOKEN?: string;
@@ -518,7 +519,7 @@ export class WorkflowAgent extends Agent<WorkflowEnv, WorkflowState> {
     }) : undefined;
     
     const orchestrator = new WorkflowOrchestrator(
-      env.GEMINI_API_KEY,
+      new AIGatewayClient('https://gateway.ai.cloudflare.com/v1', env.D1 as D1Database),
       artifactManager,
       {
         enableFeedbackLoop: true,

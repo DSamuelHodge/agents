@@ -1,54 +1,3 @@
--- 0001_initial.sql: D1 schema for workflows, steps, audit events, and settings
-
-CREATE TABLE workflows (
-  id TEXT PRIMARY KEY,
-  feature_request TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN ('pending', 'in_progress', 'completed', 'failed')),
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  artifact_url TEXT,
-  pr_number INTEGER,
-  branch TEXT,
-  quality_score INTEGER,
-  quality_passed BOOLEAN
-);
-
-CREATE INDEX idx_workflows_status ON workflows(status);
-CREATE INDEX idx_workflows_created_at ON workflows(created_at DESC);
-
-CREATE TABLE workflow_steps (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  workflow_id TEXT NOT NULL,
-  role_id TEXT NOT NULL,
-  status TEXT NOT NULL,
-  input TEXT,
-  output TEXT,
-  error TEXT,
-  started_at INTEGER,
-  finished_at INTEGER,
-  FOREIGN KEY (workflow_id) REFERENCES workflows(id)
-);
-
-CREATE INDEX idx_steps_workflow ON workflow_steps(workflow_id);
-
-CREATE TABLE audit_events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  workflow_id TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  timestamp INTEGER NOT NULL,
-  data TEXT,
-  FOREIGN KEY (workflow_id) REFERENCES workflows(id)
-);
-
-CREATE INDEX idx_audit_workflow ON audit_events(workflow_id, timestamp);
-
-CREATE TABLE app_settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-
-
 -- Agent definitions (supports 100s of agents)
 CREATE TABLE agent_definitions (
   id TEXT PRIMARY KEY,
@@ -71,6 +20,40 @@ CREATE TABLE mcp_servers (
   scopes TEXT, -- JSON array
   created_at INTEGER DEFAULT (strftime('%s', 'now'))
 );
+
+-- Workflows (GitHub issue → code → PR)
+CREATE TABLE workflows (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL, -- 'feature-planning', 'bug-triage', 'code-review'
+  issue_number INTEGER,
+  pr_number INTEGER,
+  status TEXT NOT NULL CHECK(status IN ('pending', 'in_progress', 'completed', 'failed')),
+  agents TEXT NOT NULL, -- JSON array of agent IDs
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER
+);
+
+CREATE INDEX idx_workflows_status ON workflows(status);
+CREATE INDEX idx_workflows_issue ON workflows(issue_number);
+
+-- Workflow steps (agent execution log)
+CREATE TABLE workflow_steps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  step_order INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  input TEXT,
+  output TEXT,
+  tool_calls TEXT, -- JSON array
+  started_at INTEGER,
+  finished_at INTEGER,
+  FOREIGN KEY (workflow_id) REFERENCES workflows(id),
+  FOREIGN KEY (agent_id) REFERENCES agent_definitions(id)
+);
+
+CREATE INDEX idx_steps_workflow ON workflow_steps(workflow_id, step_order);
 
 -- LLM usage tracking (AI Gateway integration)
 CREATE TABLE llm_usage (
